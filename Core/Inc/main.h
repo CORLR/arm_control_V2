@@ -42,11 +42,15 @@ extern "C" {
 /* Exported constants --------------------------------------------------------*/
 /* USER CODE BEGIN EC */
 #define RX_BUFFER_SIZE 256  // 定义最大接收缓冲区大小
-extern uint8_t g_usart1_rx_buffer[RX_BUFFER_SIZE]; // 声明全局接收缓冲区
 
+// 双缓冲区定义
+extern uint8_t g_usart1_rx_buffer_1[RX_BUFFER_SIZE];
+extern uint8_t g_usart1_rx_buffer_2[RX_BUFFER_SIZE];
+
+// 消息队列数据结构，包含缓冲区编号
 typedef struct {
-    uint8_t buffer[RX_BUFFER_SIZE];
-    uint16_t len;
+    uint8_t buffer_index;  // 0 或 1，表示使用哪个缓冲区
+    uint16_t len;          // 接收到的数据长度
 } RxDataChunk_t;
 /* USER CODE END EC */
 

@@ -51,8 +51,12 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-uint8_t g_usart1_rx_buffer[RX_BUFFER_SIZE];
+uint8_t g_usart1_rx_buffer_1[RX_BUFFER_SIZE];
+uint8_t g_usart1_rx_buffer_2[RX_BUFFER_SIZE];
 extern osMessageQueueId_t usart1RxQueueHandle;
+
+// 当前使用的缓冲区索引：0 表示 buffer_1，1 表示 buffer_2
+static volatile uint8_t g_current_buffer_index = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -106,7 +110,9 @@ int main(void)
   MX_USART1_UART_Init();
   MX_TIM17_Init();
   /* USER CODE BEGIN 2 */
-  if(HAL_UARTEx_ReceiveToIdle_DMA(&huart1, g_usart1_rx_buffer, RX_BUFFER_SIZE) != HAL_OK)
+  // 使用 buffer_1 开始接收（索引0）
+  g_current_buffer_index = 0;
+  if(HAL_UARTEx_ReceiveToIdle_IT(&huart1, g_usart1_rx_buffer_1, RX_BUFFER_SIZE) != HAL_OK)
   {
       Error_Handler();
   }
@@ -202,25 +208,26 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
     if (huart->Instance == USART1)
     {
-        // 静态消息包，避免在 ISR 中使用堆栈 (ISR-Safe)
-        static RxDataChunk_t s_rx_chunk;
-
-        // **步骤 A：(H7 核心) 刷新 D-Cache**
-        // 告诉 CPU，DMA 已经改了 RAM，你 Cache 里的数据作废了
-        SCB_InvalidateDCache_by_Addr((uint32_t*)g_usart1_rx_buffer, Size);
-
-        // **步骤 B：将数据复制到消息包中**
-        uint16_t copy_size = (Size < RX_BUFFER_SIZE) ? Size : RX_BUFFER_SIZE;
-        memcpy(s_rx_chunk.buffer, g_usart1_rx_buffer, copy_size);
-        s_rx_chunk.len = copy_size;
+        // 准备要发送的消息
+        RxDataChunk_t chunk;
+        chunk.buffer_index = g_current_buffer_index;
+        chunk.len = Size;  // 使用实际接收到的数据长度
         
-        // **步骤 C：将消息包发送到队列 (从中断发送)**
-        // 最后一个参数 0 表示不等待 (在 ISR 中必须为 0)
-        osMessageQueuePut(usart1RxQueueHandle, &s_rx_chunk, 0, 0);
-        // (如果队列满了，osMessageQueuePut 会失败，数据自动被丢弃，符合您“实时性不高”的预期)
+        // 发送到队列（使用非阻塞方式，从中断中调用）
+        osMessageQueuePut(usart1RxQueueHandle, &chunk, 0, 0);
         
-        // **步骤 D：重新启动 DMA 接收**
-        HAL_UARTEx_ReceiveToIdle_DMA(&huart1, g_usart1_rx_buffer, RX_BUFFER_SIZE);
+        // 切换缓冲区
+        g_current_buffer_index = 1 - g_current_buffer_index;
+        
+        // 使用另一个缓冲区重新启动接收
+        if (g_current_buffer_index == 0)
+        {
+            HAL_UARTEx_ReceiveToIdle_IT(&huart1, g_usart1_rx_buffer_1, RX_BUFFER_SIZE);
+        }
+        else
+        {
+            HAL_UARTEx_ReceiveToIdle_IT(&huart1, g_usart1_rx_buffer_2, RX_BUFFER_SIZE);
+        }
     }
 }
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
@@ -229,8 +236,16 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
   {
     error_flag++;
     HAL_UART_AbortReceive(huart);
-    // 重新启动 DMA 接收
-    HAL_UARTEx_ReceiveToIdle_DMA(&huart1, g_usart1_rx_buffer, RX_BUFFER_SIZE);
+    
+    // 根据当前缓冲区索引重新启动 IT 接收
+    if (g_current_buffer_index == 0)
+    {
+        HAL_UARTEx_ReceiveToIdle_IT(&huart1, g_usart1_rx_buffer_1, RX_BUFFER_SIZE);
+    }
+    else
+    {
+        HAL_UARTEx_ReceiveToIdle_IT(&huart1, g_usart1_rx_buffer_2, RX_BUFFER_SIZE);
+    }
   }
 }
 /* USER CODE END 4 */
