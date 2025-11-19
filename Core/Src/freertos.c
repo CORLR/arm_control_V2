@@ -84,7 +84,7 @@ const osMessageQueueAttr_t usart1RxQueue_attributes = {
 
 void StartDefaultTask(void *argument);
 void arm_control(void *argument);
-void StartTask03(void *argument);
+void communicate(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -112,7 +112,7 @@ void MX_FREERTOS_Init(void) {
 
   /* Create the queue(s) */
   /* creation of usart1RxQueue */
-  usart1RxQueueHandle = osMessageQueueNew (8, sizeof(RxDataChunk_t), &usart1RxQueue_attributes);
+  usart1RxQueueHandle = osMessageQueueNew (16, 32, &usart1RxQueue_attributes);
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -126,7 +126,7 @@ void MX_FREERTOS_Init(void) {
   Arm_ControlHandle = osThreadNew(arm_control, NULL, &Arm_Control_attributes);
 
   /* creation of Communicate */
-  CommunicateHandle = osThreadNew(StartTask03, NULL, &Communicate_attributes);
+  CommunicateHandle = osThreadNew(communicate, NULL, &Communicate_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -174,22 +174,22 @@ __weak void arm_control(void *argument)
   /* USER CODE END arm_control */
 }
 
-/* USER CODE BEGIN Header_StartTask03 */
+/* USER CODE BEGIN Header_communicate */
 /**
 * @brief Function implementing the Communicate thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartTask03 */
-__weak void StartTask03(void *argument)
+/* USER CODE END Header_communicate */
+__weak void communicate(void *argument)
 {
-  /* USER CODE BEGIN StartTask03 */
+  /* USER CODE BEGIN communicate */
   /* Infinite loop */
   for(;;)
   {
     osDelay(1);
   }
-  /* USER CODE END StartTask03 */
+  /* USER CODE END communicate */
 }
 
 /* Private application code --------------------------------------------------*/

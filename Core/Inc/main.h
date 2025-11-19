@@ -41,7 +41,7 @@ extern "C" {
 
 /* Exported constants --------------------------------------------------------*/
 /* USER CODE BEGIN EC */
-#define RX_BUFFER_SIZE 256  // 定义最大接收缓冲区大小
+#define RX_BUFFER_SIZE 32  // 定义最大接收缓冲区大小
 
 // 双缓冲区定义
 extern uint8_t g_usart1_rx_buffer_1[RX_BUFFER_SIZE];

@@ -21,8 +21,6 @@
 #include "cmsis_os.h"
 #include "dma.h"
 #include "fdcan.h"
-#include "stm32h7xx_hal_uart.h"
-#include "stm32h7xx_hal_uart_ex.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
