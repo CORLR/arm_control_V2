@@ -550,6 +550,13 @@ void canopen_init_hechuan(uint8_t node_id) //SDO 禾川
         g_ucTempBuf[0] = 0x01;
         g_ucTempBuf[1] = 0x00;
         write_SDO(CO->SDOclient, node_id, 0x6060, 0x00, g_ucTempBuf, 2);  //位置模式
+        
+        g_ucTempBuf[0] = 0x00;  
+        g_ucTempBuf[1] = 0xFA;  
+        g_ucTempBuf[2] = 0x00;
+        g_ucTempBuf[3] = 0x00;
+        write_SDO(CO->SDOclient, node_id, 0x6083, 0x00, g_ucTempBuf, 4);  // 设置加速度
+        write_SDO(CO->SDOclient, node_id, 0x6084, 0x00, g_ucTempBuf, 4);  // 设置减速度
 
         // 2. 写入控制字（0x6040:00）为0x06，使能准备
         g_ucTempBuf[0] = 0x06;

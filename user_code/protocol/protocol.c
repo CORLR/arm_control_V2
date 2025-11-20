@@ -7,7 +7,7 @@
 #define CONTROL_MODE_ABSOLUTE 0// 绝对控制模式
 #define CONTROL_MODE_RELATIVE 1// 相对控制模式
 
-#define CURRENT_CONTROL_MODE CONTROL_MODE_ABSOLUTE // 当前控制模式
+#define CURRENT_CONTROL_MODE CONTROL_MODE_RELATIVE // 当前控制模式
 
 // 帧头
 #define FRAME_HEADER 0x55 
@@ -156,13 +156,18 @@ void process_encoder_data(uint8_t* pData, uint32_t len)
     
     float current_host_angle[8];
 
-    current_host_angle[1] = -((float)((pData[0] << 8 | pData[1]) - 8192) / 16384 * 2 * PI) ;
-    current_host_angle[2] = (float)((pData[2] << 8 | pData[3]) - 8192) / 16384 * 2 * PI;
-    current_host_angle[3] = (float)((pData[4] << 8 | pData[5]) - 8192) / 16384 * 2 * PI;
+    // current_host_angle[1] = -((float)((pData[0] << 8 | pData[1]) - 8192) / 16384 * 2 * PI) ;
+    // current_host_angle[2] = (float)((pData[2] << 8 | pData[3]) - 8192) / 16384 * 2 * PI;
+    // current_host_angle[3] = (float)((pData[4] << 8 | pData[5]) - 8192) / 16384 * 2 * PI;
     current_host_angle[4] = -((float)((pData[6] << 8 | pData[7]) - 8192) / 16384 * 2 * PI);
-    current_host_angle[5] = (float)((pData[8] << 8 | pData[9]) - 8192) / 16384 * 2 * PI;
+    // current_host_angle[5] = (float)((pData[8] << 8 | pData[9]) - 8192) / 16384 * 2 * PI;
+    current_host_angle[1] = 0.0f; //
+    current_host_angle[2] = 0.0f; //
+    current_host_angle[3] = 0.0f; //
+    // current_host_angle[4] = 0.0f; //
+    current_host_angle[5] = 0.0f; //
     current_host_angle[6] = (float)((pData[10] << 8 | pData[11]) - 8192) / 16384 * 2 * PI;
-    current_host_angle[7] = (float)((pData[12] << 8 | pData[13]) - 8192) / 16384 * 2 * PI;
+    current_host_angle[7] = -((float)((pData[12] << 8 | pData[13]) - 8192) / 16384 * 2 * PI);
 
     
     for(int i = 1; i <= 7; i++)
