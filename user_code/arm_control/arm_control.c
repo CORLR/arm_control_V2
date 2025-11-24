@@ -109,12 +109,11 @@ void arm_control(void)
  * @param node_id 禾川电机节点ID
  * @param target 目标位置
  */
+static int32_t last_sent_target[4] = {0}; 
+static uint8_t has_sent_first[4] = {0};
+
 void hechuan_motor_setpos(uint8_t node_id, int32_t target)
 {
-    g_ucTempBuf[0] = 0x00;
-    g_ucTempBuf[1] = 0x35;
-    g_ucTempBuf[2] = 0x0C;
-    write_SDO(CO->SDOclient, node_id, 0x6081, 0x00, g_ucTempBuf, 3); //800000
     if(node_id == 3)
     {
         if (target > 10000) target = 10000;
@@ -125,17 +124,80 @@ void hechuan_motor_setpos(uint8_t node_id, int32_t target)
         if (target > 900000) target = 900000;
         if (target < -400000) target = -400000;
     }
+
+    if (has_sent_first[node_id] && (target == last_sent_target[node_id]))
+    {
+        return; 
+    }
+
+    size_t readLen;
+    if (read_SDO(CO->SDOclient, node_id, 0x6041, 0x00, g_reTempBuf, sizeof(g_reTempBuf), &readLen) == CO_SDO_AB_NONE)
+    {
+        uint16_t status = g_reTempBuf[0] | (g_reTempBuf[1] << 8);
+        if (status & 0x0008) // Bit 3 is Fault
+        {
+            // 如果有故障，发送 0x0080 (Fault Reset)
+            g_ucTempBuf[0] = 0x80; g_ucTempBuf[1] = 0x00;
+            write_SDO(CO->SDOclient, node_id, 0x6040, 0x00, g_ucTempBuf, 2);
+            return; // 正在复位中，不发送位置
+        }
+        // 检查是否 Enable (Bit 2 Operation Enabled)
+        if ((status & 0x0007) != 0x07)
+        {
+             // 如果没使能，尝试重新使能
+            g_ucTempBuf[0] = 0x0F; g_ucTempBuf[1] = 0x00;
+            write_SDO(CO->SDOclient, node_id, 0x6040, 0x00, g_ucTempBuf, 2);
+        }
+    }
+
+    // 4. 写入目标位置
     g_ucTempBuf[0] = (target & 0xFF);
     g_ucTempBuf[1] = (target & 0xFF00) >> 8;
     g_ucTempBuf[2] = (target & 0XFF0000) >> 16;
     g_ucTempBuf[3] = (target & 0XFF000000) >> 24;
-    write_SDO(CO->SDOclient, node_id, 0x607A, 0x00, g_ucTempBuf, 4);
-    g_ucTempBuf[0] = 0x1F;
-    g_ucTempBuf[1] = 0x00;
+    
+    if (write_SDO(CO->SDOclient, node_id, 0x607A, 0x00, g_ucTempBuf, 4) != CO_SDO_AB_NONE)
+    {
+        return; // 通讯繁忙，下次再试
+    }
+
+    g_ucTempBuf[0] = 0x0F; g_ucTempBuf[1] = 0x00;
     write_SDO(CO->SDOclient, node_id, 0x6040, 0x00, g_ucTempBuf, 2);
-    g_ucTempBuf[0] = 0x0F;
-    g_ucTempBuf[1] = 0x00;
+
+    g_ucTempBuf[0] = 0x3F; g_ucTempBuf[1] = 0x00;
     write_SDO(CO->SDOclient, node_id, 0x6040, 0x00, g_ucTempBuf, 2);
+
+    // 更新记录
+    last_sent_target[node_id] = target;
+    has_sent_first[node_id] = 1;
+}
+
+/**
+ * @brief 读取禾川电机当前实际速度
+ * * @param node_id 电机节点ID
+ * @return int32_t 速度值 (单位取决于驱动器设置，通常是 编码器单位/秒 或 RPM)
+ */
+int32_t hechuan_read_actual_velocity(uint8_t node_id)
+{
+    int32_t velocity = 0;
+    
+    clear_rebuff(); 
+
+    if (read_SDO(CO->SDOclient, node_id, 0x606C, 0x00,
+                 g_reTempBuf, sizeof(g_reTempBuf), &g_uiReadSize) == CO_SDO_AB_NONE
+        && g_uiReadSize >= 4) 
+    {
+        velocity = (int32_t)((uint32_t)g_reTempBuf[0] |
+                             ((uint32_t)g_reTempBuf[1] << 8) |
+                             ((uint32_t)g_reTempBuf[2] << 16)|
+                             ((uint32_t)g_reTempBuf[3] << 24));
+    }
+    else
+    {
+        // printf("Read Velocity Error on Node %d\n", node_id);
+    }
+
+    return velocity;
 }
 
 /**
@@ -544,34 +606,46 @@ void canopen_init_taihu(uint8_t node_id) //PDO 钛虎
  * 
  * @param node_id 
  */
-void canopen_init_hechuan(uint8_t node_id) //SDO 禾川
+void canopen_init_hechuan(uint8_t node_id) 
 {
-        // 1. 设置模式（0x6060:00）为1，位置模式
-        g_ucTempBuf[0] = 0x01;
-        g_ucTempBuf[1] = 0x00;
-        write_SDO(CO->SDOclient, node_id, 0x6060, 0x00, g_ucTempBuf, 2);  //位置模式
-        
-        g_ucTempBuf[0] = 0x00;  
-        g_ucTempBuf[1] = 0xFA;  
-        g_ucTempBuf[2] = 0x00;
-        g_ucTempBuf[3] = 0x00;
-        write_SDO(CO->SDOclient, node_id, 0x6083, 0x00, g_ucTempBuf, 4);  // 设置加速度
-        write_SDO(CO->SDOclient, node_id, 0x6084, 0x00, g_ucTempBuf, 4);  // 设置减速度
+    int32_t max_limit = 3000000; 
 
-        // 2. 写入控制字（0x6040:00）为0x06，使能准备
-        g_ucTempBuf[0] = 0x06;
-        g_ucTempBuf[1] = 0x00;
-        write_SDO(CO->SDOclient, node_id, 0x6040, 0x00, g_ucTempBuf, 2);
+    // 设置 0x607F: Max Profile Velocity (最大轮廓速度)
+    g_ucTempBuf[0] = (max_limit & 0xFF);
+    g_ucTempBuf[1] = (max_limit & 0xFF00) >> 8;
+    g_ucTempBuf[2] = (max_limit & 0XFF0000) >> 16;
+    g_ucTempBuf[3] = (max_limit & 0XFF000000) >> 24;
+    write_SDO(CO->SDOclient, node_id, 0x607F, 0x00, g_ucTempBuf, 4);
+    // 设置 0x6080: Profile Acceleration (轮廓加速度)
+    write_SDO(CO->SDOclient, node_id, 0x6080, 0x00, g_ucTempBuf, 4);
 
-        // 3. 写入控制字（0x6040:00）为0x07，切换到使能状态
-        g_ucTempBuf[0] = 0x07;
-        g_ucTempBuf[1] = 0x00;
-        write_SDO(CO->SDOclient, node_id, 0x6040, 0x00, g_ucTempBuf, 2);
+    g_ucTempBuf[0] = 0x01;
+    write_SDO(CO->SDOclient, node_id, 0x6060, 0x00, g_ucTempBuf, 1); // SDO写1个字节足够
 
-        // 4. 写入控制字（0x6040:00）为0x0F，启动电机
-        g_ucTempBuf[0] = 0x0F;
-        g_ucTempBuf[1] = 0x00;
-        write_SDO(CO->SDOclient, node_id, 0x6040, 0x00, g_ucTempBuf, 2);
+    int32_t fast_acc = 3000000; 
+    g_ucTempBuf[0] = (fast_acc & 0xFF);
+    g_ucTempBuf[1] = (fast_acc & 0xFF00) >> 8;
+    g_ucTempBuf[2] = (fast_acc & 0XFF0000) >> 16;
+    g_ucTempBuf[3] = (fast_acc & 0XFF000000) >> 24;
+    write_SDO(CO->SDOclient, node_id, 0x6083, 0x00, g_ucTempBuf, 4); // 加速度
+    write_SDO(CO->SDOclient, node_id, 0x6084, 0x00, g_ucTempBuf, 4); // 减速度
+
+    int32_t speed = 2000000;
+    g_ucTempBuf[0] = (speed & 0xFF);
+    g_ucTempBuf[1] = (speed & 0xFF00) >> 8;
+    g_ucTempBuf[2] = (speed & 0XFF0000) >> 16;
+    g_ucTempBuf[3] = (speed & 0XFF000000) >> 24;
+    write_SDO(CO->SDOclient, node_id, 0x6081, 0x00, g_ucTempBuf, 4);
+
+    // Shutdown
+    g_ucTempBuf[0] = 0x06; g_ucTempBuf[1] = 0x00;
+    write_SDO(CO->SDOclient, node_id, 0x6040, 0x00, g_ucTempBuf, 2);
+    // Switch On
+    g_ucTempBuf[0] = 0x07; g_ucTempBuf[1] = 0x00;
+    write_SDO(CO->SDOclient, node_id, 0x6040, 0x00, g_ucTempBuf, 2);
+    // Enable Operation
+    g_ucTempBuf[0] = 0x0F; g_ucTempBuf[1] = 0x00;
+    write_SDO(CO->SDOclient, node_id, 0x6040, 0x00, g_ucTempBuf, 2);
 }
 
 /**
@@ -617,7 +691,7 @@ CO_SDO_abortCode_t write_SDO(CO_SDOclient_t *SDO_C, uint8_t nodeId,
  
     //download data
     do {
-        uint32_t timeDifference_us = 5000;
+        uint32_t timeDifference_us = 500;
         CO_SDO_abortCode_t abortCode = CO_SDO_AB_NONE;
  
         SDO_ret = CO_SDOclientDownload(SDO_C,
@@ -671,7 +745,7 @@ CO_SDO_abortCode_t read_SDO(CO_SDOclient_t *SDO_C, uint8_t nodeId,
  
     // upload data
     do {
-        uint32_t timeDifference_us = 5000;
+        uint32_t timeDifference_us = 500;
         CO_SDO_abortCode_t abortCode = CO_SDO_AB_NONE;
  
         SDO_ret = CO_SDOclientUpload(SDO_C,

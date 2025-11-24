@@ -49,7 +49,7 @@
 #define D_1 289.01                  //连杆AB长度转轴到电机固定端
 #define D_2 60.0                    //连杆AC长度转轴到电机活动端
 #define DEFAULT_LONG 264.18         //3号电机初始长度
-#define DEFAULT_ANGLE 1.05842024         //初始角度补偿
+#define DEFAULT_ANGLE 0.7873         //初始角度补偿
 #define CENTER_DIS  48.0            //1号电机和2号电机中点距离
 #define DEFAULT_HIGHT  168.7        //固定杆的长度
 #define SHAFT_DIS  18.0             //1号电机和2号电机转轴中心平面到旋转轴的距离
@@ -67,7 +67,7 @@
 #define ANGLE_ERROR_7 -0.35f
 
 #define SPEED 5000
-#define ACCELERATED 1000
+#define ACCELERATED 2000
 
 /*
 *********************************************************************************************************
@@ -138,6 +138,8 @@ void set_all_motor_pos();                                //根据电机目标角
 void canopen_init();                                      // 电机CANopen初始化
 void canopen_init_taihu(uint8_t node_id);                     // 钛虎电机CANopen初始化
 void canopen_init_hechuan(uint8_t node_id);                   // 禾川电机CANopen初始化
+int32_t hechuan_read_actual_velocity(uint8_t node_id);            // 读取禾川电机实际速度
+void check_hechuan_speed_limits(uint8_t node_id);              // 检查禾川电机速度是否超限
 
 CO_SDO_abortCode_t write_SDO(CO_SDOclient_t *SDO_C, uint8_t nodeId,
                              uint16_t index, uint8_t subIndex,
