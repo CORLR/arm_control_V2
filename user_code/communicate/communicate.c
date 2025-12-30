@@ -12,14 +12,13 @@ extern osMessageQueueId_t usart1RxQueueHandle;
 extern uint8_t g_usart1_rx_buffer_1[RX_BUFFER_SIZE];
 extern uint8_t g_usart1_rx_buffer_2[RX_BUFFER_SIZE];
 
-
 void communicate()
 {
     RxDataChunk_t local_chunk;
     osStatus_t status;
     uint8_t *pBuffer;
-    
-    while(1)
+
+    while (1)
     {
         status = osMessageQueueGet(usart1RxQueueHandle, &local_chunk, NULL, osWaitForever);
         if (status == osOK)
@@ -33,14 +32,10 @@ void communicate()
             {
                 pBuffer = g_usart1_rx_buffer_2;
             }
-            
+
             // 从指定缓冲区解析数据
             Protocol_Parse_Chunk(pBuffer, local_chunk.len);
         }
         osDelay(1);
     }
-    
 }
-
-
-

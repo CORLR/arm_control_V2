@@ -6,7 +6,7 @@
 #include "stdint.h"
 #include "cmsis_os2.h"
 #include "main.h"
-#include "math.h"
+#include "arm_math.h"
 
 /* ============================================================================== */
 /* 宏定义与常量                                  */
