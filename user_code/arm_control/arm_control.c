@@ -6,31 +6,36 @@
 #include "stdint.h"
 #include "cmsis_os2.h"
 #include "main.h"
-#include "arm_math.h"
+#include "arm_math.h" // 引入 CMSIS-DSP 库
 
 /* ============================================================================== */
-/* 宏定义与常量                                  */
+/* 宏定义与常量 (FPU 深度优化)                                                   */
 /* ============================================================================== */
 
 /* CANopen 对象字典索引 */
-#define OD_IDX_CONTROL_WORD         0x6040  // 控制字
-#define OD_IDX_STATUS_WORD          0x6041  // 状态字
-#define OD_IDX_MODE_OF_OP           0x6060  // 运行模式
-#define OD_IDX_POS_ACTUAL           0x6064  // 实际位置
-#define OD_IDX_VEL_ACTUAL           0x606C  // 实际速度
-#define OD_IDX_POS_TARGET           0x607A  // 目标位置
-#define OD_IDX_PROFILE_VEL          0x6081  // 轮廓速度
-#define OD_IDX_PROFILE_ACC          0x6083  // 轮廓加速度
-#define OD_IDX_PROFILE_DEC          0x6084  // 轮廓减速度
+#define OD_IDX_CONTROL_WORD         0x6040
+#define OD_IDX_STATUS_WORD          0x6041
+#define OD_IDX_MODE_OF_OP           0x6060
+#define OD_IDX_POS_ACTUAL           0x6064
+#define OD_IDX_VEL_ACTUAL           0x606C
+#define OD_IDX_POS_TARGET           0x607A
+#define OD_IDX_PROFILE_VEL          0x6081
+#define OD_IDX_PROFILE_ACC          0x6083
+#define OD_IDX_PROFILE_DEC          0x6084
 
-/* 减速比与转换常量 */
+/* 减速比与转换常量 - 强制使用 float 后缀 */
 #define RATIO_NODE_4_5              121.0f
 #define RATIO_NODE_6                81.0f
 #define RATIO_NODE_7                51.0f
-#define POS_RESOLUTION              65536.0f // 16-bit 细分
-#define PI_2                        (2.0f * PI)
 
-/* 硬件限制 (保护逻辑保持原样) */
+#define POS_RESOLUTION              65536.0f
+/* 预计算倒数，将运行时除法优化为乘法 */
+#define POS_RESOLUTION_INV          (1.0f / POS_RESOLUTION) 
+
+#define PI_2                        (2.0f * PI)
+#define PI_2_INV                    (1.0f / PI_2)
+
+/* 硬件限制 */
 #define LIMIT_HC_NODE3_MAX          10000
 #define LIMIT_HC_NODE3_MIN          -3000000
 #define LIMIT_HC_OTHER_MAX          900000
@@ -41,7 +46,7 @@
 #define LIMIT_TH_NODE5_MIN          -2200000
 
 /* ============================================================================== */
-/* 全局变量                                      */
+/* 全局变量                                                                      */
 /* ============================================================================== */
 
 int16_t dianliu_kp[4] = {0}; 
@@ -52,20 +57,20 @@ int16_t weizhi_ki[4]  = {0};
 int16_t weizhi_kd[4]  = {0}; 
 
 /* 存放各电机实际位置，下标=节点ID；motor_angle[0]未用 */
-float motor_angle[8];       // 存储当前电机角度(rad)和长度(mm)数据
-int32_t motor_pos[8];       // 编码器原始数值
-int32_t set_pos[8];         // 目标编码器数值
-float set_motor[8];         // 目标物理量 (1-3:长度mm, 4-7:角度rad)
-float set_joint_angle[8];   // 设置目标关节角度
-float joint_angle[8];       // 存储当前关节角度
+float motor_angle[8];       
+int32_t motor_pos[8];       
+int32_t set_pos[8];         
+float set_motor[8];         
+float set_joint_angle[8];   
+float joint_angle[8];       
 
 extern TIM_HandleTypeDef htim17;
 extern FDCAN_HandleTypeDef hfdcan2;
 extern CO_t* CO;
 
 /* 缓冲区与标志位 */
-uint8_t g_ucTempBuf[20];    // 发送缓冲区
-uint8_t g_reTempBuf[20];    // 接收缓冲区
+uint8_t g_ucTempBuf[20];    
+uint8_t g_reTempBuf[20];    
 uint32_t g_uiReadSize;
 
 uint32_t speed = SPEED;
@@ -73,19 +78,19 @@ uint32_t accelerated = ACCELERATED;
 int32_t xianwei;
 uint32_t flag;
 
-uint8_t data_error[64];         // 错误信息上报缓冲
-uint8_t data_jiaodu[64];        // 角度数据上报缓冲
-uint8_t read = 0;               // 串口当前字节
-uint8_t ucStatus = 0;           // 协议状态
-uint8_t len = 0;                // 长度
-uint8_t ucCount = 0;            // 计数
-uint8_t motor_init = 0;         // 电机初始化完成标志
+uint8_t data_error[64];        
+uint8_t data_jiaodu[64];        
+uint8_t read = 0;              
+uint8_t ucStatus = 0;           
+uint8_t len = 0;                
+uint8_t ucCount = 0;            
+uint8_t motor_init = 0;         
 
 CANopenNodeSTM32 canOpenNodeSTM32;      
-uint8_t canopen_init_flag = 0;  // CANopen栈初始化完成标志
+uint8_t canopen_init_flag = 0;  
 
 /* ============================================================================== */
-/* 静态辅助函数                                  */
+/* 静态辅助函数 (保留原有打包方式)                                                */
 /* ============================================================================== */
 
 /**
@@ -120,19 +125,21 @@ static inline int32_t unpack_int32(const uint8_t *buf)
 }
 
 /**
- * @brief 获取钛虎电机的减速比
+ * @brief 获取钛虎电机的减速比 (查找表优化)
  */
 static inline float get_taihu_ratio(uint8_t node_id)
 {
-    switch(node_id) {
-        case 6: return RATIO_NODE_6;
-        case 7: return RATIO_NODE_7;
-        default: return RATIO_NODE_4_5; // Node 4 and 5
+    /* 使用静态数组代替 switch，减少分支跳转 */
+    static const float ratios[] = {RATIO_NODE_4_5, RATIO_NODE_4_5, RATIO_NODE_6, RATIO_NODE_7};
+    
+    if (node_id >= 4 && node_id <= 7) {
+        return ratios[node_id - 4];
     }
+    return RATIO_NODE_4_5; 
 }
 
 /* ============================================================================== */
-/* 主控制逻辑                                    */
+/* 主控制逻辑                                                                    */
 /* ============================================================================== */
 
 void arm_control(void)
@@ -142,27 +149,26 @@ void arm_control(void)
     canOpenNodeSTM32.HWInitFunction = MX_FDCAN2_Init;     
     canOpenNodeSTM32.timerHandle = &htim17;             
     canOpenNodeSTM32.desiredNodeID = 26;                
-    canOpenNodeSTM32.baudrate = 1000;                   /* 1MHz */
+    canOpenNodeSTM32.baudrate = 1000;                   
     canopen_app_init(&canOpenNodeSTM32);
 
     OD_RAM.x607A_target_position = 0;
 
-    /* 清空所有状态 */
-    for (int i = 0; i < 8; i++) 
-    {
-        motor_angle[i] = 0;
-        set_pos[i] = 0;
-        set_motor[i] = 0;
-        set_joint_angle[i] = 0;
-        joint_angle[i] = 0;
-    }
+    /* 使用 CMSIS-DSP 快速填充/清零 float 数组 */
+    arm_fill_f32(0.0f, motor_angle, 8);
+    arm_fill_f32(0.0f, set_motor, 8);
+    arm_fill_f32(0.0f, set_joint_angle, 8);
+    arm_fill_f32(0.0f, joint_angle, 8);
+    
+    /* Int 数组使用标准 memset 即可 */
+    for(int i=0; i<8; i++) set_pos[i] = 0;
 
     while (1)
     {
         /* CANopen 协议栈周期性处理 */
         canopen_app_process();
 
-        /* 注册错误回调 (仅执行一次) */
+        /* 注册错误回调 */
         if (canopen_init_flag == 0)
         {
             CO_EM_initCallbackRx(CO->em, callback_error);
@@ -178,10 +184,10 @@ void arm_control(void)
         
         if (motor_init)
         {
-            set_all_motor();            // 计算目标电机值 (逆运动学)
-            set_all_motor_pos();        // 发送控制指令
-            collect_motor_positions();  // 读取当前状态
-            collect_joint_angles();     // 计算关节角度 (正运动学)
+            set_all_motor();            // 逆运动学
+            set_all_motor_pos();        // 发送指令
+            collect_motor_positions();  // 读取反馈
+            collect_joint_angles();     // 正运动学
         }
         
         osDelay(1); // 释放CPU权
@@ -189,13 +195,9 @@ void arm_control(void)
 }
 
 /* ============================================================================== */
-/* 电机控制函数                                  */
+/* 电机控制函数                                                                  */
 /* ============================================================================== */
 
-/**
- * @brief 设置禾川电机目标位置 (通过SDO)
- * 包含状态检查：Fault Reset -> Enable -> Set Position -> New Setpoint
- */
 static int32_t last_sent_target[4] = {0}; 
 static uint8_t has_sent_first[4] = {0};
 
@@ -205,12 +207,12 @@ void hechuan_motor_setpos(uint8_t node_id, int32_t target)
     if(node_id == 3)
     {
         if (target > LIMIT_HC_NODE3_MAX) target = LIMIT_HC_NODE3_MAX;
-        if (target < LIMIT_HC_NODE3_MIN) target = LIMIT_HC_NODE3_MIN;
+        else if (target < LIMIT_HC_NODE3_MIN) target = LIMIT_HC_NODE3_MIN;
     }
     else 
     {
         if (target > LIMIT_HC_OTHER_MAX) target = LIMIT_HC_OTHER_MAX;
-        if (target < LIMIT_HC_OTHER_MIN) target = LIMIT_HC_OTHER_MIN;
+        else if (target < LIMIT_HC_OTHER_MIN) target = LIMIT_HC_OTHER_MIN;
     }
 
     /* 2. 冗余发送过滤 */
@@ -219,7 +221,7 @@ void hechuan_motor_setpos(uint8_t node_id, int32_t target)
         return; 
     }
 
-    /* 3. 状态字检查 (0x6041) */
+    /* 3. 状态字检查 */
     size_t readLen;
     if (read_SDO(CO->SDOclient, node_id, OD_IDX_STATUS_WORD, 0x00, g_reTempBuf, sizeof(g_reTempBuf), &readLen) == CO_SDO_AB_NONE)
     {
@@ -228,35 +230,31 @@ void hechuan_motor_setpos(uint8_t node_id, int32_t target)
         // Bit 3: Fault
         if (status & 0x0008) 
         {
-            // 发送 Fault Reset (0x0080)
-            pack_uint16(g_ucTempBuf, 0x0080);
+            pack_uint16(g_ucTempBuf, 0x0080); // Fault Reset
             write_SDO(CO->SDOclient, node_id, OD_IDX_CONTROL_WORD, 0x00, g_ucTempBuf, 2);
-            return; // 正在复位中，暂不发送位置
+            return; 
         }
         
         // Mask 0x0007, Check if 'Operation Enabled' (0x07)
         if ((status & 0x0007) != 0x07)
         {
-            // 尝试重新使能 (0x000F)
-            pack_uint16(g_ucTempBuf, 0x000F);
+            pack_uint16(g_ucTempBuf, 0x000F); // Enable
             write_SDO(CO->SDOclient, node_id, OD_IDX_CONTROL_WORD, 0x00, g_ucTempBuf, 2);
         }
     }
 
-    /* 4. 写入目标位置 (0x607A) */
+    /* 4. 写入目标位置 */
     pack_int32(g_ucTempBuf, target);
     if (write_SDO(CO->SDOclient, node_id, OD_IDX_POS_TARGET, 0x00, g_ucTempBuf, 4) != CO_SDO_AB_NONE)
     {
-        return; // 通讯繁忙
+        return; 
     }
 
-    /* 5. 触发运动 (Control Word toggle) */
-    // Enable Operation (0x000F)
+    /* 5. 触发运动 */
     pack_uint16(g_ucTempBuf, 0x000F);
     write_SDO(CO->SDOclient, node_id, OD_IDX_CONTROL_WORD, 0x00, g_ucTempBuf, 2);
 
-    // New Set-point + Enable Operation (0x003F: Bit 4 is New Set-point)
-    pack_uint16(g_ucTempBuf, 0x003F);
+    pack_uint16(g_ucTempBuf, 0x003F); // New Set-point
     write_SDO(CO->SDOclient, node_id, OD_IDX_CONTROL_WORD, 0x00, g_ucTempBuf, 2);
 
     /* 6. 更新缓存 */
@@ -264,9 +262,6 @@ void hechuan_motor_setpos(uint8_t node_id, int32_t target)
     has_sent_first[node_id] = 1;
 }
 
-/**
- * @brief 读取禾川电机实际速度
- */
 int32_t hechuan_read_actual_velocity(uint8_t node_id)
 {
     int32_t velocity = 0;
@@ -281,12 +276,9 @@ int32_t hechuan_read_actual_velocity(uint8_t node_id)
     return velocity;
 }
 
-/**
- * @brief 设置钛虎电机目标位置 (通过 TPDO 映射的 OD_RAM)
- */
 void taihu_motor_setpos(uint8_t node_id, int32_t target)
 {
-    // 应用特定节点的软件限位
+    /* 应用特定节点的软件限位 */
     switch (node_id) 
     {
         case 4:
@@ -313,13 +305,13 @@ void taihu_motor_setpos(uint8_t node_id, int32_t target)
             return;
     }
 
-    // 触发立即执行 (0x001F: Bit 4 New Setpoint in Profile Position Mode often implies immediate update if configured)
+    /* 触发立即执行 */
     pack_uint16(g_ucTempBuf, 0x001F);
     write_SDO(CO->SDOclient, node_id, OD_IDX_CONTROL_WORD, 0x00, g_ucTempBuf, 2);
 }
 
 /* ============================================================================== */
-/* 位置与数据采集                                */
+/* 位置与数据采集                                                                */
 /* ============================================================================== */
 
 void collect_motor_positions() 
@@ -332,13 +324,14 @@ void collect_motor_positions()
             && g_uiReadSize >= 4) 
         {
             int32_t raw_pos = unpack_int32(g_reTempBuf);
-            motor_angle[id] = hechuan_pos_to_length(raw_pos);
+            /* 优化：使用乘法代替除法 */
+            motor_angle[id] = (float)raw_pos * POS_RESOLUTION_INV;
             motor_pos[id]   = raw_pos;
         }
         clear_rebuff();
     }
 
-    /* 节点4~7 (钛虎): 使用 PDO 映射直接读取内存 */
+    /* 节点4~7 (钛虎): 使用 PDO 映射直接读取 */
     motor_pos[4] = OD_RAM.x6065__6064.ID46064;
     motor_pos[5] = OD_RAM.x6065__6064.ID56064;
     motor_pos[6] = OD_RAM.x6065__6064.ID66064;
@@ -351,26 +344,28 @@ void collect_motor_positions()
 }
 
 /* ============================================================================== */
-/* 单位转换逻辑                                  */
+/* 单位转换逻辑 (FPU 优化版)                                                     */
 /* ============================================================================== */
 
 float taihu_pos_to_angle(uint8_t node_id, int32_t pos)
 {
     float ratio = get_taihu_ratio(node_id);
-    // Angle = (Pos / Ratio / Resolution) * 2PI
-    return (float)pos / ratio / POS_RESOLUTION * PI_2;
+    /* 优化：Angle = Pos * (1/Ratio) * (1/Res) * 2PI 
+       将连续除法转换为乘法链，并保持 float 类型 */
+    return ((float)pos / ratio) * POS_RESOLUTION_INV * PI_2;
 }
 
 int32_t taihu_angle_to_pos(uint8_t node_id, float angle)
 {
     float ratio = get_taihu_ratio(node_id);
-    // Pos = (Angle / 2PI) * Ratio * Resolution
-    return (int32_t)(angle / PI_2 * ratio * POS_RESOLUTION);
+    /* 优化：Pos = Angle * (1/2PI) * Ratio * Resolution */
+    return (int32_t)(angle * PI_2_INV * ratio * POS_RESOLUTION);
 }
 
 float hechuan_pos_to_length(int32_t pos)
 {
-    return (float)pos / POS_RESOLUTION;
+    /* 优化：乘法代替除法 */
+    return (float)pos * POS_RESOLUTION_INV;
 }
 
 int32_t hechuan_length_to_pos(float length)
@@ -379,37 +374,28 @@ int32_t hechuan_length_to_pos(float length)
 }
 
 /* ============================================================================== */
-/* 运动学算法                                    */
+/* 运动学算法 (FPU/CMSIS-DSP 优化)                                               */
 /* ============================================================================== */
 
-/**
- * @brief 直线电机长度 -> 关节角度 (正运动学)
- * * 1号和2号电机控制 Pitch 和 Roll：
- * - Roll 由长度差决定
- * - Pitch 由平均长度决定
- * 3号电机控制肘关节：
- * - 余弦定理计算角度
- */
 void linear_to_joint_angle()
 {
-    float L1 = motor_angle[1] + LINEAR_ERROR_1; // 1号电机绝对长度
-    float L2 = motor_angle[2] + LINEAR_ERROR_2; // 2号电机绝对长度
+    float L1 = motor_angle[1] + LINEAR_ERROR_1; 
+    float L2 = motor_angle[2] + LINEAR_ERROR_2; 
     
-    // 计算 Roll (atan2((L2-L1), Width))
+    /* 使用 f 后缀的标准数学函数，确保 FPU 调用 */
     joint_angle[7] = atan2f((L2 - L1), CENTER_DIS); 
 
-    // 计算 Pitch (atan2(Avg_L, Height))
-    joint_angle[6] = atan2f(((L1 + L2)) / 2.0f, SHAFT_DIS); 
+    /* 优化：/2.0f 改为 *0.5f */
+    joint_angle[6] = atan2f(((L1 + L2)) * 0.5f, SHAFT_DIS); 
 
-    // 计算 Elbow Angle (余弦定理)
     float L3 = DEFAULT_LONG - motor_angle[3]; 
     float num = (D_1 * D_1) + (D_2 * D_2) - (L3 * L3);
-    float den = 2.0f * D_1 * D_2;
-    float COS_A = num / den;
+    float den_inv = 1.0f / (2.0f * D_1 * D_2); /* 建议将 1/(2*D1*D2) 提取为常量预编译 */
+    float COS_A = num * den_inv;
     
-    // 保护 acos 输入范围
+    /* 简单的限幅 */
     if (COS_A > 1.0f) COS_A = 1.0f;
-    if (COS_A < -1.0f) COS_A = -1.0f;
+    else if (COS_A < -1.0f) COS_A = -1.0f;
     
     joint_angle[4] = acosf(COS_A) - DEFAULT_ANGLE;
 }
@@ -417,32 +403,36 @@ void linear_to_joint_angle()
 void collect_joint_angles()
 {
     linear_to_joint_angle();
-    // 旋转关节直接映射
+    
+    /* 旋转关节直接映射 */
     joint_angle[1] = motor_angle[4]; 
     joint_angle[2] = motor_angle[5]; 
     joint_angle[3] = motor_angle[6]; 
     joint_angle[5] = motor_angle[7]; 
 }
 
-/**
- * @brief 关节角度 -> 直线电机长度 (逆运动学)
- * * L1 = H*tan(pitch) - (W/2)*tan(roll)
- * L2 = H*tan(pitch) + (W/2)*tan(roll)
- * L3 = sqrt(a^2 + b^2 - 2ab*cos(theta))
- */
 void joint_angle_to_linear()
 {
     float roll = set_joint_angle[7];
     float pitch = set_joint_angle[6];
     
+    /* FPU: tanf */
     float common_term = SHAFT_DIS * tanf(pitch);
-    float diff_term   = (CENTER_DIS / 2.0f) * tanf(roll);
+    /* 优化：除以2 改为 乘以0.5 */
+    float diff_term   = (CENTER_DIS * 0.5f) * tanf(roll);
 
     set_motor[1] = -(common_term - diff_term) - LINEAR_ERROR_1;
     set_motor[2] = -(common_term + diff_term) - LINEAR_ERROR_2;
 
     float COS_A = cosf(set_joint_angle[4] + DEFAULT_ANGLE);
-    float L3 = sqrtf((D_1 * D_1) + (D_2 * D_2) - (2.0f * D_1 * D_2 * COS_A));
+    
+    float L3_sq = (D_1 * D_1) + (D_2 * D_2) - (2.0f * D_1 * D_2 * COS_A);
+    
+    /* 关键优化：使用 arm_sqrt_f32 (CMSIS-DSP) 
+       注：sqrtf 也可以，但 arm_sqrt_f32 显式表明意图 */
+    float L3;
+    arm_sqrt_f32(L3_sq, &L3);
+    
     set_motor[3] = DEFAULT_LONG - L3;
 }
 
@@ -466,7 +456,7 @@ void set_all_motor_pos()
     set_pos[2] = hechuan_length_to_pos(set_motor[2]);
     set_pos[3] = hechuan_length_to_pos(set_motor[3]);
     set_pos[4] = taihu_angle_to_pos(CANopenSlaveID4, set_motor[4]);
-    set_pos[5] = taihu_angle_to_pos(CANopenSlaveID5, set_motor[5]); // ID5 uses same logic as ID4/5 in function
+    set_pos[5] = taihu_angle_to_pos(CANopenSlaveID5, set_motor[5]);
     set_pos[6] = taihu_angle_to_pos(CANopenSlaveID6, set_motor[6]);
     set_pos[7] = taihu_angle_to_pos(CANopenSlaveID7, set_motor[7]);
 
@@ -481,7 +471,7 @@ void set_all_motor_pos()
 }
 
 /* ============================================================================== */
-/* CANopen 初始化                                */
+/* CANopen 初始化                                                                */
 /* ============================================================================== */
 
 void clear_rebuff(void)
@@ -511,56 +501,42 @@ void canopen_init()
     canopen_init_taihu(CANopenSlaveID7);
 }
 
-/**
- * @brief 初始化钛虎电机的CANopen参数
- * 配置 PDO 映射、同步模式、速度/加速度限制以及软件限位
- */
 void canopen_init_taihu(uint8_t node_id) 
 {
-    /* 1. 配置 RPDO1 (Receive PDO 1) */
-    // COB-ID (0x1400:01)
+    /* RPDO1 */
     g_ucTempBuf[0] = node_id; g_ucTempBuf[1] = 0x02; g_ucTempBuf[2] = 0x00; g_ucTempBuf[3] = 0x00;
     write_SDO(CO->SDOclient, node_id, 0x1400, 0x01, g_ucTempBuf, 4);
 
-    // Mapping (0x1600:01) -> Target Position (0x607A)
     g_ucTempBuf[0] = 0x20; g_ucTempBuf[1] = 0x00; g_ucTempBuf[2] = 0x7A; g_ucTempBuf[3] = 0x60;
     write_SDO(CO->SDOclient, node_id, 0x1600, 0x01, g_ucTempBuf, 4);
 
-    // Number of mapped objects (0x1600:00) = 1
     g_ucTempBuf[0] = 0x01;
     write_SDO(CO->SDOclient, node_id, 0x1600, 0x00, g_ucTempBuf, 1);
 
-    /* 2. 配置 TPDO1 (Transmit PDO 1) */
-    // COB-ID (0x1800:01) -> 0x180 + NodeID
+    /* TPDO1 */
     g_ucTempBuf[0] = 0x80 + node_id; g_ucTempBuf[1] = 0x01; g_ucTempBuf[2] = 0x00; g_ucTempBuf[3] = 0x00;
     write_SDO(CO->SDOclient, node_id, 0x1800, 0x01, g_ucTempBuf, 4);
 
-    // Transmission Type (0x1800:02) = 1 (Synchronous per SYNC)
     g_ucTempBuf[0] = 0x01;
     write_SDO(CO->SDOclient, node_id, 0x1800, 0x02, g_ucTempBuf, 1);
 
-    // Event Timer (0x1800:06) = 1ms
     g_ucTempBuf[0] = 0x01;
     write_SDO(CO->SDOclient, node_id, 0x1800, 0x06, g_ucTempBuf, 1);
 
-    // Mapping (0x1A00:01) -> Actual Position (0x6064)
     g_ucTempBuf[0] = 0x20; g_ucTempBuf[1] = 0x00; g_ucTempBuf[2] = 0x64; g_ucTempBuf[3] = 0x60;
     write_SDO(CO->SDOclient, node_id, 0x1A00, 0x01, g_ucTempBuf, 4);
 
-    // Number of mapped objects
     g_ucTempBuf[0] = 0x01;
     write_SDO(CO->SDOclient, node_id, 0x1A00, 0x00, g_ucTempBuf, 1);
 
-    /* 3. 软件限位 (0x607D) */
-    // Min Limit (0x80000002)
+    /* 软件限位 */
     pack_int32(g_ucTempBuf, 0x80000002);
     write_SDO(CO->SDOclient, node_id, 0x607D, 0x01, g_ucTempBuf, 4);
 
-    // Max Limit (0x7FFFFFFE)
     pack_int32(g_ucTempBuf, 0x7FFFFFFE);
     write_SDO(CO->SDOclient, node_id, 0x607D, 0x02, g_ucTempBuf, 4);
 
-    /* 4. 运动参数 (Velocity, Acc, Dec) */
+    /* 运动参数 */
     pack_uint16(g_ucTempBuf, (uint16_t)speed);
     write_SDO(CO->SDOclient, node_id, OD_IDX_PROFILE_VEL, 0x00, g_ucTempBuf, 2);
     
@@ -570,12 +546,10 @@ void canopen_init_taihu(uint8_t node_id)
     pack_uint16(g_ucTempBuf, (uint16_t)accelerated);
     write_SDO(CO->SDOclient, node_id, OD_IDX_PROFILE_DEC, 0x00, g_ucTempBuf, 2);
     
-    /* 5. 设置模式与状态机启动 */
-    // Mode = 1 (Profile Position Mode)
+    /* 模式与启动 */
     g_ucTempBuf[0] = 0x01;
     write_SDO(CO->SDOclient, node_id, OD_IDX_MODE_OF_OP, 0x00, g_ucTempBuf, 1);
 
-    // CiA 402 State Machine: Shutdown(06) -> SwitchOn(07) -> EnableOp(0F) -> Start(1F)
     pack_uint16(g_ucTempBuf, 0x0006);
     write_SDO(CO->SDOclient, node_id, OD_IDX_CONTROL_WORD, 0x00, g_ucTempBuf, 2);
     
@@ -589,36 +563,27 @@ void canopen_init_taihu(uint8_t node_id)
     write_SDO(CO->SDOclient, node_id, OD_IDX_CONTROL_WORD, 0x00, g_ucTempBuf, 2);
 }
 
-/**
- * @brief 初始化禾川电机的CANopen参数
- */
 void canopen_init_hechuan(uint8_t node_id) 
 {
     int32_t max_limit = 3000000; 
     int32_t fast_acc = 3000000; 
     int32_t speed_val = 2000000;
 
-    // Max Profile Velocity (0x607F)
     pack_int32(g_ucTempBuf, max_limit);
     write_SDO(CO->SDOclient, node_id, 0x607F, 0x00, g_ucTempBuf, 4);
     
-    // Profile Acceleration (0x6080) - 实际上禾川这里可能需要写，但原代码未赋新值仅调用了Write
     write_SDO(CO->SDOclient, node_id, 0x6080, 0x00, g_ucTempBuf, 4);
 
-    // Mode = 1 (Profile Position)
     g_ucTempBuf[0] = 0x01;
     write_SDO(CO->SDOclient, node_id, OD_IDX_MODE_OF_OP, 0x00, g_ucTempBuf, 1); 
 
-    // Acc (0x6083) / Dec (0x6084)
     pack_int32(g_ucTempBuf, fast_acc);
     write_SDO(CO->SDOclient, node_id, OD_IDX_PROFILE_ACC, 0x00, g_ucTempBuf, 4); 
     write_SDO(CO->SDOclient, node_id, OD_IDX_PROFILE_DEC, 0x00, g_ucTempBuf, 4); 
 
-    // Profile Velocity (0x6081)
     pack_int32(g_ucTempBuf, speed_val);
     write_SDO(CO->SDOclient, node_id, OD_IDX_PROFILE_VEL, 0x00, g_ucTempBuf, 4);
 
-    // State Machine: Shutdown(06) -> SwitchOn(07) -> EnableOp(0F)
     pack_uint16(g_ucTempBuf, 0x0006);
     write_SDO(CO->SDOclient, node_id, OD_IDX_CONTROL_WORD, 0x00, g_ucTempBuf, 2);
     
@@ -630,7 +595,7 @@ void canopen_init_hechuan(uint8_t node_id)
 }
 
 /* ============================================================================== */
-/* CANopen 底层封装                              */
+/* CANopen SDO 底层                                                              */
 /* ============================================================================== */
 
 CO_SDO_abortCode_t write_SDO(CO_SDOclient_t *SDO_C, uint8_t nodeId,
@@ -659,7 +624,7 @@ CO_SDO_abortCode_t write_SDO(CO_SDOclient_t *SDO_C, uint8_t nodeId,
         SDO_ret = CO_SDOclientDownload(SDO_C, timeDifference_us, false, bufferPartial, &abortCode, NULL, NULL);
         if (SDO_ret < 0) return abortCode;
  
-        osDelay(timeDifference_us / 1000);
+        if (SDO_ret > 0) osDelay(1);
     } while(SDO_ret > 0);
  
     return CO_SDO_AB_NONE;
@@ -687,7 +652,7 @@ CO_SDO_abortCode_t read_SDO(CO_SDOclient_t *SDO_C, uint8_t nodeId,
         SDO_ret = CO_SDOclientUpload(SDO_C, timeDifference_us, false, &abortCode, NULL, NULL, NULL);
         if (SDO_ret < 0) return abortCode;
  
-        osDelay(timeDifference_us / 1000);
+        if (SDO_ret > 0) osDelay(1);
     } while(SDO_ret > 0);
  
     *readSize = CO_SDOclientUploadBufRead(SDO_C, buf, bufSize);
