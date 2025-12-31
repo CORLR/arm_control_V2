@@ -65,14 +65,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${USER_SOURCES}
 
     # ========================================================
-    # [修改] 添加 CMSIS-DSP 源文件
-    # 注意：请确保路径 Drivers/CMSIS/DSP/... 是真实存在的
-    # 如果你的 Drivers 文件夹位置不同，请在此处修改
+    # [删除] 这里不需要再添加 CMSIS-DSP 的 .c 源文件了
+    # 因为我们将在下面通过 target_link_libraries 直接链接 .a 库文件
     # ========================================================
-    Drivers/CMSIS/DSP/Source/SupportFunctions/arm_fill_f32.c
-    
-    # 如果将来报错 arm_sqrt_f32 未定义，取消下面这行的注释
-    # Drivers/CMSIS/DSP/Source/FastMathFunctions/arm_sqrt_f32.c
 )
 
 # Add include paths
@@ -81,7 +76,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     ${USER_INCLUDE_DIRS}
 
     # ========================================================
-    # [修改] 添加 CMSIS-DSP 头文件路径
+    # [保持] 头文件路径仍然是需要的，以便编译代码能找到 arm_math.h
     # ========================================================
     Drivers/CMSIS/DSP/Include
 )
@@ -94,15 +89,22 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # [修改] 添加 CMSIS-DSP 必要的宏定义
     # ========================================================
     ARM_MATH_CM7      # 指定 Cortex-M7 内核
-    __FPU_PRESENT=1   # 开启硬件浮点单元支持
+    
+    # __FPU_PRESENT=1 # 如有重定义警告，保持注释即可
 )
 
 # Remove wrong libob.a library dependency when using cpp files
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 
-# Add linked libraries
+# ========================================================
+# [重要修改] 这里添加静态库链接
+# ========================================================
 target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
 
-    # Add user defined libraries
+    # 链接 CMSIS-DSP 静态库
+    # 路径说明: ${CMAKE_SOURCE_DIR} 是项目根目录 (E:/code/arm_control_V2)
+    # 文件名说明: 对于 M7内核 + Little Endian，通常是 libarm_cortexM7lfdp_math.a
+    # 请务必去你的 Drivers/CMSIS/DSP/Lib/GCC 文件夹下确认文件名是否完全一致！
+    "${CMAKE_SOURCE_DIR}/Drivers/CMSIS/DSP/Lib/GCC/libarm_cortexM7lfdp_math.a"
 )

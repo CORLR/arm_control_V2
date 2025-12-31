@@ -4,6 +4,7 @@
 #include "stdint.h"
 #include "string.h" 
 #include "arm_control.h" // 包含 set_joint_angle, setJointAngleMutexHandle 等定义
+#include "kinematics.h"  // 包含运动学相关定义
 
 // ==============================================================================
 // 配置宏定义
@@ -52,6 +53,9 @@ static float g_filter_buffer[8][FILTER_WINDOW_SIZE];
 static uint8_t g_filter_idx = 0; 
 static bool g_filter_initialized = false;
 #endif
+
+float current_joints[7] = {0, 0, 0, 0, 0, 0, 0}; // 单位：弧度
+Matrix4x4 current_pose;
 
 // ==============================================================================
 // 内部辅助函数声明
@@ -223,6 +227,16 @@ void process_encoder_data(uint8_t* pData, uint32_t len)
         for(int i = 1; i <= 7; i++) {
             set_joint_angle[i] = normalize_angle(set_joint_angle[i]);
         }
+
+        current_joints[0] = set_joint_angle[1];
+        current_joints[1] = set_joint_angle[2];
+        current_joints[2] = set_joint_angle[3];
+        current_joints[3] = set_joint_angle[4];
+        current_joints[4] = set_joint_angle[5];
+        current_joints[5] = set_joint_angle[6];
+        current_joints[6] = set_joint_angle[7];
+
+        Calculate_FK(current_joints, &current_pose);
 
         osMutexRelease(setJointAngleMutexHandle);
     }
