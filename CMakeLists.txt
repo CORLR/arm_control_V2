@@ -63,21 +63,12 @@ list(REMOVE_DUPLICATES USER_INCLUDE_DIRS)
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     ${USER_SOURCES}
-
-    # ========================================================
-    # [删除] 这里不需要再添加 CMSIS-DSP 的 .c 源文件了
-    # 因为我们将在下面通过 target_link_libraries 直接链接 .a 库文件
-    # ========================================================
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
     ${USER_INCLUDE_DIRS}
-
-    # ========================================================
-    # [保持] 头文件路径仍然是需要的，以便编译代码能找到 arm_math.h
-    # ========================================================
     Drivers/CMSIS/DSP/Include
 )
 
@@ -85,9 +76,6 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
 
-    # ========================================================
-    # [修改] 添加 CMSIS-DSP 必要的宏定义
-    # ========================================================
     ARM_MATH_CM7      # 指定 Cortex-M7 内核
     
     # __FPU_PRESENT=1 # 如有重定义警告，保持注释即可
@@ -96,9 +84,6 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 # Remove wrong libob.a library dependency when using cpp files
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 
-# ========================================================
-# [重要修改] 这里添加静态库链接
-# ========================================================
 target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
 

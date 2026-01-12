@@ -6,7 +6,8 @@
 #include "stdint.h"
 #include "cmsis_os2.h"
 #include "main.h"
-#include "arm_math.h" // 引入 CMSIS-DSP 库
+#include "arm_math.h"
+#include "kinematics.h"
 
 /* ============================================================================== */
 /* 宏定义与常量 (FPU 深度优化)                                                   */
@@ -55,6 +56,10 @@ int16_t dianliu_kd[4] = {0};
 int16_t weizhi_kp[4]  = {0}; 
 int16_t weizhi_ki[4]  = {0}; 
 int16_t weizhi_kd[4]  = {0}; 
+
+float master_joint_angle[8]; 
+Matrix4x4 g_TargetPose;      
+uint8_t g_ik_enable;
 
 /* 存放各电机实际位置，下标=节点ID；motor_angle[0]未用 */
 float motor_angle[8];       
