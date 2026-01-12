@@ -57,8 +57,21 @@ int16_t weizhi_kp[4]  = {0};
 int16_t weizhi_ki[4]  = {0}; 
 int16_t weizhi_kd[4]  = {0}; 
 
+/** * @brief 存储从 protocol 接收到的 Master(人手) 原始角度 
+ * 用于 IK 的初始猜测 (Posture Guidance)
+ * 索引 1-7 对应 Joint 1-7
+ */
 float master_joint_angle[8]; 
+
+/** * @brief 存储由 protocol 计算出的末端目标位姿 T_target
+ * IK 求解器将努力让机械臂末端到达这个位姿
+ */
 Matrix4x4 g_TargetPose;      
+
+/** * @brief IK 使能标志位
+ * 1: 开启 IK 模式 (由 protocol.c 根据宏定义自动置位)
+ * 0: 关闭 IK 模式 (直接透传角度)
+ */
 uint8_t g_ik_enable;
 
 /* 存放各电机实际位置，下标=节点ID；motor_angle[0]未用 */
@@ -168,6 +181,9 @@ void arm_control(void)
     /* Int 数组使用标准 memset 即可 */
     for(int i=0; i<8; i++) set_pos[i] = 0;
 
+    Mat4_Init(&g_TargetPose);
+    Mat4_SetIdentity(&g_TargetPose);
+
     while (1)
     {
         /* CANopen 协议栈周期性处理 */
@@ -189,6 +205,24 @@ void arm_control(void)
         
         if (motor_init)
         {
+            // 4. IK 核心逻辑
+            if (g_ik_enable)
+            {
+                float ik_guess[7], ik_result[7];
+                
+                // 填入猜测值 (从 1~7 转 0~6)
+                for(int i=0; i<7; i++) ik_guess[i] = master_joint_angle[i+1];
+                
+                // 解算
+                Calculate_IK(&g_TargetPose, ik_guess, ik_result);
+                
+                // 赋值 (从 0~6 转 1~7)
+                if(osMutexAcquire(setJointAngleMutexHandle, 0) == osOK) {
+                    for(int i=0; i<7; i++) set_joint_angle[i+1] = ik_result[i];
+                    osMutexRelease(setJointAngleMutexHandle);
+                }
+            }
+
             set_all_motor();            // 逆运动学
             set_all_motor_pos();        // 发送指令
             collect_motor_positions();  // 读取反馈
